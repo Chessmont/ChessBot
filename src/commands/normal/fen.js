@@ -50,7 +50,7 @@ module.exports = {
 
     } catch (error) {
       console.error("Erreur dans la commande fen:", error);
-      
+
       await interaction.editReply('❌ **Erreur** - Impossible de générer l\'image pour ce FEN. Vérifiez que la notation est correcte.');
     }
   }

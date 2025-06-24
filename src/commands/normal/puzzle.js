@@ -227,6 +227,8 @@ const handleMove = async (interaction, userPuzzle, userMove) => {
   await interaction.deferReply();
 
   try {
+    const guildId = interaction.guild.id; // Ajouter cette ligne manquante
+
     // Convertir le coup de l'utilisateur du français vers l'anglais pour la validation
     const englishUserMove = convertToEnglish(userMove);
 
@@ -319,7 +321,7 @@ const handleMove = async (interaction, userPuzzle, userMove) => {
 
         pendingPuzzles.delete(guildId);
         await interaction.editReply(`✅ **Coup correct !** (${frenchMove}) - Puzzle terminé !`);
-        
+
         // Annonce publique du coup correct
         await interaction.followUp(`🎉 <@${interaction.user.id}> a trouvé le dernier coup et terminé le puzzle ! (${frenchMove})`);
 
@@ -342,7 +344,10 @@ const handleMove = async (interaction, userPuzzle, userMove) => {
 
   } catch (error) {
     console.error("Erreur lors du traitement du coup:", error);
-    await interaction.editReply('❌ **Erreur** - Vérifiez la notation de votre coup.');
+    await interaction.editReply({
+      content: '❌ **Erreur** - Vérifiez la notation de votre coup.',
+      flags: MessageFlags.Ephemeral
+    });
   }
 };
 
@@ -473,9 +478,11 @@ const showHint = async (interaction, userPuzzle) => {
 };
 
 const showSolution = async (interaction, userPuzzle) => {
-  await interaction.deferReply();
+  await interaction.deferReply({ ephemeral: true }); // Rendre la réponse éphémère dès le début
 
   try {
+    const guildId = interaction.guild.id; // Ajouter guildId
+
     // Convertir la solution UCI en SAN puis en français
     const chess = new Chess();
     chess.loadPgn(userPuzzle.pgn);
@@ -535,18 +542,24 @@ const showSolution = async (interaction, userPuzzle) => {
       components: [] // Retirer les boutons
     });
 
-    pendingPuzzles.delete(userPuzzle.messageId);
+    pendingPuzzles.delete(guildId); // Utiliser guildId au lieu de userPuzzle.messageId
 
     // Réponse éphémère avec la solution
     await interaction.editReply({ embeds: [solutionEmbed] });
 
     // Message de dénonciation publique
-    await interaction.followUp({ content: `🔔 <@${interaction.user.id}> a consulté la solution du puzzle !` });
+    await interaction.followUp({
+      content: `🔔 <@${interaction.user.id}> a consulté la solution du puzzle !`,
+      ephemeral: false // S'assurer que c'est public
+    });
 
   } catch (error) {
     console.error("Erreur lors de l'affichage de la solution:", error);
 
-    await interaction.editReply('❌ **Erreur** - Impossible d\'afficher la solution.');
+    await interaction.editReply({
+      content: '❌ **Erreur** - Impossible d\'afficher la solution.',
+      flags: MessageFlags.Ephemeral
+    });
   }
 };
 
