@@ -1,0 +1,35 @@
+{
+  "name": "chessbot",
+  "version": "1.0.0",
+  "description": "Chess bot to play chess and have puzzle",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Chessmont/ChessBot.git"
+  },
+  "keywords": [
+    "chess",
+    "puzzle",
+    "bot",
+    "chessbot",
+    "chess-bot",
+    "chess-puzzle",
+    "chess-game",
+    "chess-engine"
+  ],
+  "author": "djahmo",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/Chessmont/ChessBot/issues"
+  },
+  "homepage": "https://github.com/Chessmont/ChessBot#readme",
+  "dependencies": {
+    "axios": "^1.10.0",
+    "chess.js": "^1.4.0",
+    "discord.js": "^14.20.0",
+    "dotenv": "^16.5.0"
+  }
+}
