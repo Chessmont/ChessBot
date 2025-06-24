@@ -224,7 +224,7 @@ const createNewPuzzle = async (interaction, difficulty, guildId) => {
 };
 
 const handleMove = async (interaction, userPuzzle, userMove) => {
-  await interaction.deferReply();
+  await interaction.deferReply(); // Retour à la normale
 
   try {
     const guildId = interaction.guild.id; // Ajouter cette ligne manquante
@@ -320,23 +320,18 @@ const handleMove = async (interaction, userPuzzle, userMove) => {
         });
 
         pendingPuzzles.delete(guildId);
-        await interaction.editReply(`✅ **Coup correct !** (${frenchMove}) - Puzzle terminé !`);
-
-        // Annonce publique du coup correct
-        await interaction.followUp(`🎉 <@${interaction.user.id}> a trouvé le dernier coup et terminé le puzzle ! (${frenchMove})`);
+        await interaction.editReply(`🎉 <@${interaction.user.id}> a trouvé le dernier coup et terminé le puzzle ! (${frenchMove})`);
 
       } else {
         // Coup correct mais puzzle pas fini - générer nouvelle position
         await updatePuzzlePosition(interaction, userPuzzle, correctSolutionSAN);
-        await interaction.editReply(`✅ **Coup correct !** (${frenchMove})`);
-        
-        // Annonce publique du coup correct
-        await interaction.followUp(`✅ <@${interaction.user.id}> a trouvé un coup correct ! (${frenchMove})`);
+        await interaction.editReply(`✅ <@${interaction.user.id}> a trouvé un coup correct ! (${frenchMove})`);
       }
 
     } else {
       // Coup incorrect (message éphémère)
-      await interaction.editReply({
+      await interaction.editReply('🔄 Traitement...');
+      await interaction.followUp({
         content: `❌ **Coup incorrect !** (${userMove})`,
         flags: MessageFlags.Ephemeral
       });
@@ -344,7 +339,8 @@ const handleMove = async (interaction, userPuzzle, userMove) => {
 
   } catch (error) {
     console.error("Erreur lors du traitement du coup:", error);
-    await interaction.editReply({
+    await interaction.editReply('🔄 Traitement...');
+    await interaction.followUp({
       content: '❌ **Erreur** - Vérifiez la notation de votre coup.',
       flags: MessageFlags.Ephemeral
     });
@@ -394,7 +390,6 @@ const updatePuzzlePosition = async (interaction, userPuzzle, correctSolutionSAN)
           const solver = userPuzzle.solvers[index] ? `<@${userPuzzle.solvers[index]}>` : 'Inconnu';
           return `${index + 1}. ${move} (${solver})`;
         }).join('\n'), inline: false },
-        { name: '📊 Coups', value: `${userPuzzle.userMoves.length}/${Math.ceil(correctSolutionSAN.length / 2)}`, inline: true },
         { name: '👤 Trait aux', value: activeColor === 'w' ? 'Blancs' : 'Noirs', inline: true },
         { name: '⭐ Rating', value: `${userPuzzle.rating}`, inline: true },
         { name: '🎯 Difficulté', value: translateDifficulty(userPuzzle.difficulty), inline: true }
@@ -481,8 +476,6 @@ const showSolution = async (interaction, userPuzzle) => {
   await interaction.deferReply({ ephemeral: true }); // Rendre la réponse éphémère dès le début
 
   try {
-    const guildId = interaction.guild.id; // Ajouter guildId
-
     // Convertir la solution UCI en SAN puis en français
     const chess = new Chess();
     chess.loadPgn(userPuzzle.pgn);
@@ -517,37 +510,16 @@ const showSolution = async (interaction, userPuzzle) => {
 
     if (userPuzzle.userMoves && userPuzzle.userMoves.length > 0) {
       solutionEmbed.addFields({
-        name: '👤 Vos coups trouvés',
+        name: '👤 Coups déjà trouvés',
         value: `${userPuzzle.userMoves.join(" ")} (${userPuzzle.userMoves.length}/${Math.ceil(correctSolutionSAN.length / 2)})`,
         inline: false
       });
     }
 
-    // Terminer le puzzle
-    const updatedEmbed = new EmbedBuilder()
-      .setColor('#FFA500')
-      .setTitle('👁️ Solution Consultée')
-      .setDescription('Le puzzle a été terminé car la solution a été consultée.')
-      .addFields(
-        { name: '✅ Solution complète', value: frenchSolution.join(" "), inline: false },
-        { name: '⭐ Rating', value: `${userPuzzle.rating}`, inline: true },
-        { name: '🎯 Difficulté', value: translateDifficulty(userPuzzle.difficulty), inline: true }
-      )
-      .setTimestamp()
-      .setFooter({ text: 'Utilisez /puzzle pour un nouveau puzzle' });
-
-    const originalMessage = await interaction.channel.messages.fetch(userPuzzle.messageId);
-    await originalMessage.edit({
-      embeds: [updatedEmbed],
-      components: [] // Retirer les boutons
-    });
-
-    pendingPuzzles.delete(guildId); // Utiliser guildId au lieu de userPuzzle.messageId
-
-    // Réponse éphémère avec la solution
+    // Réponse éphémère avec la solution (ne pas toucher au puzzle principal)
     await interaction.editReply({ embeds: [solutionEmbed] });
 
-    // Message de dénonciation publique
+    // Message de dénonciation publique uniquement
     await interaction.followUp({
       content: `🔔 <@${interaction.user.id}> a consulté la solution du puzzle !`,
       ephemeral: false // S'assurer que c'est public
@@ -556,10 +528,7 @@ const showSolution = async (interaction, userPuzzle) => {
   } catch (error) {
     console.error("Erreur lors de l'affichage de la solution:", error);
 
-    await interaction.editReply({
-      content: '❌ **Erreur** - Impossible d\'afficher la solution.',
-      flags: MessageFlags.Ephemeral
-    });
+    await interaction.editReply('❌ **Erreur** - Impossible d\'afficher la solution.');
   }
 };
 
