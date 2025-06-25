@@ -1,8 +1,7 @@
-const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
+const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder } = require("discord.js");
 const { Chess } = require("chess.js");
 const { spawn } = require("child_process");
-const path = require("path");
-
+const axios = require("axios");
 const commandName = "eval";
 const commandInfo = "Évaluer une position d'échecs avec Stockfish";
 const commandDescription = "Analyse une position FEN avec le moteur Stockfish et retourne l'évaluation";
@@ -21,10 +20,10 @@ module.exports = {
     .addIntegerOption(option =>
       option
         .setName('profondeur')
-        .setDescription('Profondeur d\'analyse (1-20, défaut: 15)')
+        .setDescription('Profondeur d\'analyse (1-30, défaut: 15)')
         .setRequired(false)
         .setMinValue(1)
-        .setMaxValue(20)
+        .setMaxValue(30)
     ),
 
   async execute(interaction) {
@@ -47,12 +46,58 @@ module.exports = {
             { name: 'FEN fourni', value: `\`${fen}\``, inline: false }
           )
           .setTimestamp();
-        
+
         return await interaction.editReply({ embeds: [errorEmbed] });
       }
 
       // Analyser avec Stockfish
       const evaluation = await analyzePosition(fen, depth);
+
+      // Ajuster l'évaluation selon le trait (Stockfish retourne du point de vue du joueur au trait)
+      if (evaluation.score && chess.turn() === 'b') {
+        if (evaluation.score.type === 'cp') {
+          evaluation.score.value = -evaluation.score.value;
+        } else if (evaluation.score.type === 'mate') {
+          evaluation.score.value = -evaluation.score.value;
+        }
+      }
+
+      // Convertir le meilleur coup UCI en SAN français
+      let bestMoveSAN = 'Aucun';
+      if (evaluation.bestMove && evaluation.bestMove !== '(none)') {
+        try {
+          const tempChess = new Chess(fen);
+          const move = tempChess.move({
+            from: evaluation.bestMove.slice(0, 2),
+            to: evaluation.bestMove.slice(2, 4),
+            promotion: evaluation.bestMove.length > 4 ? evaluation.bestMove[4] : undefined
+          });
+          if (move) {
+            bestMoveSAN = convertToFrench(move.san);
+          }
+        } catch (error) {
+          console.error("Erreur lors de la conversion UCI vers SAN:", error);
+          bestMoveSAN = evaluation.bestMove; // Fallback vers UCI
+        }
+      }
+
+      // Générer l'image de l'échiquier
+      let imageUrl = `https://fen2image.chessvision.ai/${encodeURIComponent(fen)}`;
+      if (chess.turn() === 'b') {
+        imageUrl += '?turn=black&pov=black';
+      } else {
+        imageUrl += '?turn=white&pov=white';
+      }
+
+      let attachment = null;
+      try {
+        const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+        const imageBuffer = Buffer.from(imageResponse.data, 'binary');
+        attachment = new AttachmentBuilder(imageBuffer, { name: 'chess_position.png' });
+      } catch (imageError) {
+        console.error("Erreur lors de la génération de l'image:", imageError);
+        // Continue sans l'image si elle ne peut pas être générée
+      }
 
       const embed = new EmbedBuilder()
         .setColor('#0099FF')
@@ -62,7 +107,7 @@ module.exports = {
           { name: '⚖️ Évaluation', value: formatEvaluation(evaluation.score), inline: true },
           { name: '🎯 Profondeur', value: `${depth}`, inline: true },
           { name: '👤 Trait aux', value: chess.turn() === 'w' ? 'Blancs' : 'Noirs', inline: true },
-          { name: '🎯 Meilleur coup', value: evaluation.bestMove || 'Aucun', inline: true },
+          { name: '🎯 Meilleur coup', value: bestMoveSAN, inline: true },
           { name: '📊 Nœuds analysés', value: evaluation.nodes?.toLocaleString() || 'N/A', inline: true },
           { name: '⏱️ Temps', value: `${evaluation.time || 'N/A'}ms`, inline: true }
         )
@@ -70,7 +115,17 @@ module.exports = {
         .setTimestamp()
         .setFooter({ text: 'Analyse fournie par Stockfish' });
 
-      await interaction.editReply({ embeds: [embed] });
+      // Ajouter l'image à l'embed si disponible
+      if (attachment) {
+        embed.setImage('attachment://chess_position.png');
+      }
+
+      const replyOptions = { embeds: [embed] };
+      if (attachment) {
+        replyOptions.files = [attachment];
+      }
+
+      await interaction.editReply(replyOptions);
 
     } catch (error) {
       console.error("Erreur dans la commande eval:", error);
@@ -86,49 +141,32 @@ module.exports = {
   }
 };
 
-async function analyzePosition(fen, depth) {
+// Fonction pour convertir la notation anglaise vers française
+const convertToFrench = (move) => {
+  return move
+    .replace(/K/g, 'R')  // King -> Roi
+    .replace(/Q/g, 'D')  // Queen -> Dame
+    .replace(/R/g, 'T')  // Rook -> Tour
+    .replace(/B/g, 'F')  // Bishop -> Fou
+    .replace(/N/g, 'C'); // Knight -> Cavalier
+};
+
+const analyzePosition = async (fen, depth) => {
   return new Promise((resolve, reject) => {
-    // Essayer différents noms/chemins pour Stockfish
-    const stockfishCommands = [
-      'stockfish',
-      'stockfish.exe',
-      'C:\\Program Files\\Stockfish\\stockfish.exe',
-      'C:\\Program Files (x86)\\Stockfish\\stockfish.exe',
-      'C:\\Users\\Clayton\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Stockfish.Stockfish_Microsoft.Winget.Source_8wekyb3d8bbwe\\stockfish.exe',
-      'C:\\Users\\Clayton\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Stockfish.Stockfish_Microsoft.Winget.Source_8wekyb3d8bbwe\\stockfish\\stockfish.exe',
-      path.join(process.env.USERPROFILE || 'C:\\Users\\Clayton', 'AppData', 'Local', 'Microsoft', 'WinGet', 'Packages', 'Stockfish.Stockfish_Microsoft.Winget.Source_8wekyb3d8bbwe', 'stockfish.exe'),
-      path.join(__dirname, '..', '..', '..', 'stockfish', 'stockfish.exe'),
-      path.join(__dirname, '..', '..', '..', 'bin', 'stockfish.exe')
-    ];
+    const stockfishProcess = spawn("stockfish", [], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: true
+    });
 
-    let stockfishProcess = null;
-    let commandIndex = 0;
+    stockfishProcess.on('error', (error) => {
+      console.log(`Erreur avec stockfish": ${error.message}`);
+    });
 
-    function tryNextCommand() {
-      if (commandIndex >= stockfishCommands.length) {
-        return reject(new Error('Stockfish introuvable. Vérifiez que Stockfish est installé.'));
-      }
+    stockfishProcess.on('spawn', () => {
+      setupStockfish();
+    });
 
-      const command = stockfishCommands[commandIndex++];
-      console.log(`Tentative avec: ${command}`);
-
-      stockfishProcess = spawn(command, [], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        shell: true
-      });
-
-      stockfishProcess.on('error', (error) => {
-        console.log(`Erreur avec ${command}:`, error.message);
-        tryNextCommand();
-      });
-
-      stockfishProcess.on('spawn', () => {
-        console.log(`Stockfish démarré avec: ${command}`);
-        setupStockfish();
-      });
-    }
-
-    function setupStockfish() {
+    const setupStockfish = () => {
       let output = '';
       let bestMove = null;
       let score = null;
@@ -139,13 +177,11 @@ async function analyzePosition(fen, depth) {
       stockfishProcess.stdout.on('data', (data) => {
         output += data.toString();
         const lines = output.split('\n');
-        
+
         lines.forEach(line => {
           line = line.trim();
           if (!line) return;
-          
-          console.log('Stockfish:', line);
-          
+
           if (line.startsWith('bestmove')) {
             bestMove = line.split(' ')[1];
             if (!analysisComplete) {
@@ -164,19 +200,19 @@ async function analyzePosition(fen, depth) {
             const depthIndex = parts.indexOf('depth');
             const scoreIndex = parts.indexOf('score');
             const nodesIndex = parts.indexOf('nodes');
-            
+
             if (depthIndex !== -1 && parts[depthIndex + 1] == depth.toString()) {
               if (scoreIndex !== -1) {
                 const scoreType = parts[scoreIndex + 1];
                 const scoreValue = parseInt(parts[scoreIndex + 2]);
-                
+
                 if (scoreType === 'cp') {
                   score = { type: 'cp', value: scoreValue };
                 } else if (scoreType === 'mate') {
                   score = { type: 'mate', value: scoreValue };
                 }
               }
-              
+
               if (nodesIndex !== -1) {
                 nodes = parseInt(parts[nodesIndex + 1]);
               }
@@ -197,6 +233,8 @@ async function analyzePosition(fen, depth) {
 
       // Envoyer les commandes UCI
       stockfishProcess.stdin.write('uci\n');
+      stockfishProcess.stdin.write('setoption name Threads value 3\n'); // Utiliser 3 threads
+      stockfishProcess.stdin.write('setoption name Hash value 128\n');   // 128 MB de hash
       stockfishProcess.stdin.write('ucinewgame\n');
       stockfishProcess.stdin.write(`position fen ${fen}\n`);
       stockfishProcess.stdin.write(`go depth ${depth}\n`);
@@ -210,14 +248,12 @@ async function analyzePosition(fen, depth) {
         }
       }, 30000);
     }
-
-    tryNextCommand();
   });
 }
 
-function formatEvaluation(score) {
+const formatEvaluation = (score) => {
   if (!score) return 'N/A';
-  
+
   if (score.type === 'mate') {
     if (score.value > 0) {
       return `Mat en ${score.value} coup${score.value > 1 ? 's' : ''} (Blancs)`;
@@ -226,21 +262,21 @@ function formatEvaluation(score) {
     }
   } else if (score.type === 'cp') {
     const eval_score = score.value / 100;
-    if (eval_score > 0) {
+    if (eval_score > 0.3) {
       return `+${eval_score.toFixed(2)} (Avantage Blancs)`;
-    } else if (eval_score < 0) {
+    } else if (eval_score < -0.3) {
       return `${eval_score.toFixed(2)} (Avantage Noirs)`;
     } else {
-      return `0.00 (Égalité)`;
+      return `${eval_score.toFixed(2)} (Égalité)`;
     }
   }
-  
+
   return 'N/A';
 }
 
-function getEvaluationDescription(score, turn) {
+const getEvaluationDescription = (score, turn) => {
   if (!score) return '🤖 Analyse en cours...';
-  
+
   if (score.type === 'mate') {
     if (score.value > 0) {
       return '👑 **Mat forcé pour les Blancs !**';
@@ -249,23 +285,23 @@ function getEvaluationDescription(score, turn) {
     }
   } else if (score.type === 'cp') {
     const eval_score = score.value / 100;
-    
+
     if (Math.abs(eval_score) < 0.5) {
       return '⚖️ **Position équilibrée** - Égalité approximative';
     } else if (Math.abs(eval_score) < 1.5) {
-      return eval_score > 0 ? 
-        '📈 **Léger avantage aux Blancs**' : 
+      return eval_score > 0 ?
+        '📈 **Léger avantage aux Blancs**' :
         '📉 **Léger avantage aux Noirs**';
     } else if (Math.abs(eval_score) < 3.0) {
-      return eval_score > 0 ? 
-        '🔥 **Net avantage aux Blancs**' : 
+      return eval_score > 0 ?
+        '🔥 **Net avantage aux Blancs**' :
         '🔥 **Net avantage aux Noirs**';
     } else {
-      return eval_score > 0 ? 
-        '💥 **Avantage décisif pour les Blancs**' : 
+      return eval_score > 0 ?
+        '💥 **Avantage décisif pour les Blancs**' :
         '💥 **Avantage décisif pour les Noirs**';
     }
   }
-  
+
   return '🤖 Analyse terminée';
 }
