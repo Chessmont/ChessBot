@@ -11,6 +11,33 @@ require("dotenv").config();
 
 global.data = require('./config.json');
 
+// Charger les ouvertures d'échecs au démarrage
+const loadOpenings = () => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const openingsPath = path.join(__dirname, 'src', 'data', 'openings.tsv');
+    const content = fs.readFileSync(openingsPath, 'utf-8');
+    const lines = content.split('\n').slice(1); // Ignorer la ligne d'en-tête
+    
+    global.openings = lines
+      .filter(line => line.trim()) // Ignorer les lignes vides
+      .map(line => {
+        const [eco, name, pgn, fen, ply] = line.split('\t');
+        return { eco, name, pgn, fen, ply: parseInt(ply) };
+      })
+      .filter(opening => opening.name && opening.fen); // S'assurer que les données sont valides
+    
+    console.log(`✅ ${global.openings.length} ouvertures chargées en mémoire`);
+  } catch (error) {
+    console.error('❌ Erreur lors du chargement des ouvertures:', error);
+    global.openings = [];
+  }
+};
+
+// Charger les ouvertures
+loadOpenings();
+
 const client = new Client({
   shards: 0,
   intents: [

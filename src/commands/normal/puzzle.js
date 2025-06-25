@@ -99,8 +99,16 @@ module.exports = {
       // Gestion des modals
       if (interaction.isModalSubmit()) {
         if (interaction.customId === 'move_modal') {
-          const userMove = interaction.fields.getTextInputValue('move_input');
+          const userMove = interaction.fields.getTextInputValue('move_input').trim();
           const guildId = interaction.guild.id;
+
+          // Vérifier si l'utilisateur a écrit quelque chose
+          if (!userMove) {
+            return await interaction.reply({
+              content: '❌ Vous devez écrire un coup pour jouer !',
+              flags: MessageFlags.Ephemeral
+            });
+          }
 
           const userPuzzle = pendingPuzzles.get(guildId);
 
@@ -473,7 +481,7 @@ const showHint = async (interaction, userPuzzle) => {
 };
 
 const showSolution = async (interaction, userPuzzle) => {
-  await interaction.deferReply({ ephemeral: true }); // Rendre la réponse éphémère dès le début
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral }); // Rendre la réponse éphémère dès le début
 
   try {
     // Convertir la solution UCI en SAN puis en français
@@ -521,8 +529,7 @@ const showSolution = async (interaction, userPuzzle) => {
 
     // Message de dénonciation publique uniquement
     await interaction.followUp({
-      content: `🔔 <@${interaction.user.id}> a consulté la solution du puzzle !`,
-      ephemeral: false // S'assurer que c'est public
+      content: `🔔 <@${interaction.user.id}> a consulté la solution du puzzle !`
     });
 
   } catch (error) {

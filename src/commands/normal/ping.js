@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, } = require("discord.js");
+const { SlashCommandBuilder, MessageFlags } = require("discord.js");
 
   const commandName = "ping";
   const commandInfo = "Répond pong!";
@@ -10,6 +10,6 @@ const { SlashCommandBuilder, } = require("discord.js");
         .setName(commandName)
         .setDescription(commandInfo),
       async execute(interaction) {
-        await interaction.reply("Pong !", { ephemeral: true });
+        await interaction.reply({ content: "Pong !", flags: MessageFlags.Ephemeral });
       },
     };
