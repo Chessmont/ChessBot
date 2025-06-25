@@ -338,8 +338,7 @@ const handleMove = async (interaction, userPuzzle, userMove) => {
 
     } else {
       // Coup incorrect (message éphémère)
-      await interaction.editReply('🔄 Traitement...');
-      await interaction.followUp({
+      await interaction.editReply({
         content: `❌ **Coup incorrect !** (${userMove})`,
         flags: MessageFlags.Ephemeral
       });
@@ -347,8 +346,7 @@ const handleMove = async (interaction, userPuzzle, userMove) => {
 
   } catch (error) {
     console.error("Erreur lors du traitement du coup:", error);
-    await interaction.editReply('🔄 Traitement...');
-    await interaction.followUp({
+    await interaction.editReply({
       content: '❌ **Erreur** - Vérifiez la notation de votre coup.',
       flags: MessageFlags.Ephemeral
     });
@@ -548,7 +546,7 @@ const showMoveModal = async (interaction) => {
     .setCustomId('move_input')
     .setLabel('Coup (notation algébrique)')
     .setStyle(TextInputStyle.Short)
-    .setPlaceholder('Ex: Cf6, e4, O-O, Dxd5+')
+    .setPlaceholder('Ex: Cf6 ou Dxd5+ etc.. (mettre un seul coup)')
     .setRequired(true)
     .setMaxLength(10);
 
