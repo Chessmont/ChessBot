@@ -19,11 +19,11 @@ module.exports = {
     )
     .addIntegerOption(option =>
       option
-        .setName('profondeur')
-        .setDescription('Profondeur d\'analyse (1-30, défaut: 15)')
+        .setName('temps')
+        .setDescription('Temps d\'analyse en secondes (1-10, défaut: 3)')
         .setRequired(false)
         .setMinValue(1)
-        .setMaxValue(30)
+        .setMaxValue(10)
     ),
 
   async execute(interaction) {
@@ -31,7 +31,7 @@ module.exports = {
       await interaction.deferReply();
 
       const fen = interaction.options.getString('fen');
-      const depth = interaction.options.getInteger('profondeur') || 15;
+      const timeSeconds = interaction.options.getInteger('temps') || 3;
 
       // Valider le FEN avec chess.js
       const chess = new Chess();
@@ -51,7 +51,7 @@ module.exports = {
       }
 
       // Analyser avec Stockfish
-      const evaluation = await analyzePosition(fen, depth);
+      const evaluation = await analyzePosition(fen, timeSeconds);
 
       // Ajuster l'évaluation selon le trait (Stockfish retourne du point de vue du joueur au trait)
       if (evaluation.score && chess.turn() === 'b') {
@@ -105,11 +105,11 @@ module.exports = {
         .addFields(
           { name: '📍 Position', value: `\`${fen}\``, inline: false },
           { name: '⚖️ Évaluation', value: formatEvaluation(evaluation.score), inline: true },
-          { name: '🎯 Profondeur', value: `${depth}`, inline: true },
+          { name: '🎯 Profondeur', value: `${evaluation.depth || 'N/A'}`, inline: true },
           { name: '👤 Trait aux', value: chess.turn() === 'w' ? 'Blancs' : 'Noirs', inline: true },
           { name: '🎯 Meilleur coup', value: bestMoveSAN, inline: true },
           { name: '📊 Nœuds analysés', value: evaluation.nodes?.toLocaleString() || 'N/A', inline: true },
-          { name: '⏱️ Temps', value: `${evaluation.time || 'N/A'}ms`, inline: true }
+          { name: '⏱️ Temps', value: `${timeSeconds}s`, inline: true }
         )
         .setDescription(getEvaluationDescription(evaluation.score, chess.turn()))
         .setTimestamp()
@@ -151,7 +151,7 @@ const convertToFrench = (move) => {
     .replace(/N/g, 'C'); // Knight -> Cavalier
 };
 
-const analyzePosition = async (fen, depth) => {
+const analyzePosition = async (fen, timeSeconds) => {
   return new Promise((resolve, reject) => {
     const stockfishProcess = spawn("stockfish", [], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -171,8 +171,10 @@ const analyzePosition = async (fen, depth) => {
       let bestMove = null;
       let score = null;
       let nodes = null;
+      let depth = null;
       const startTime = Date.now();
       let analysisComplete = false;
+      let analysisTimeout;
 
       stockfishProcess.stdout.on('data', (data) => {
         output += data.toString();
@@ -186,12 +188,14 @@ const analyzePosition = async (fen, depth) => {
             bestMove = line.split(' ')[1];
             if (!analysisComplete) {
               analysisComplete = true;
+              clearTimeout(analysisTimeout);
               const time = Date.now() - startTime;
               stockfishProcess.kill();
               resolve({
                 bestMove,
                 score,
                 nodes,
+                depth,
                 time
               });
             }
@@ -201,21 +205,24 @@ const analyzePosition = async (fen, depth) => {
             const scoreIndex = parts.indexOf('score');
             const nodesIndex = parts.indexOf('nodes');
 
-            if (depthIndex !== -1 && parts[depthIndex + 1] == depth.toString()) {
-              if (scoreIndex !== -1) {
-                const scoreType = parts[scoreIndex + 1];
-                const scoreValue = parseInt(parts[scoreIndex + 2]);
+            // Garder la dernière information de profondeur
+            if (depthIndex !== -1) {
+              depth = parseInt(parts[depthIndex + 1]);
+            }
 
-                if (scoreType === 'cp') {
-                  score = { type: 'cp', value: scoreValue };
-                } else if (scoreType === 'mate') {
-                  score = { type: 'mate', value: scoreValue };
-                }
-              }
+            if (scoreIndex !== -1) {
+              const scoreType = parts[scoreIndex + 1];
+              const scoreValue = parseInt(parts[scoreIndex + 2]);
 
-              if (nodesIndex !== -1) {
-                nodes = parseInt(parts[nodesIndex + 1]);
+              if (scoreType === 'cp') {
+                score = { type: 'cp', value: scoreValue };
+              } else if (scoreType === 'mate') {
+                score = { type: 'mate', value: scoreValue };
               }
+            }
+
+            if (nodesIndex !== -1) {
+              nodes = parseInt(parts[nodesIndex + 1]);
             }
           }
         });
@@ -237,16 +244,39 @@ const analyzePosition = async (fen, depth) => {
       stockfishProcess.stdin.write('setoption name Hash value 128\n');   // 128 MB de hash
       stockfishProcess.stdin.write('ucinewgame\n');
       stockfishProcess.stdin.write(`position fen ${fen}\n`);
-      stockfishProcess.stdin.write(`go depth ${depth}\n`);
+      stockfishProcess.stdin.write('go infinite\n');
 
-      // Timeout de sécurité
+      // Arrêter l'analyse après le temps demandé
+      analysisTimeout = setTimeout(() => {
+        if (!analysisComplete) {
+          stockfishProcess.stdin.write('stop\n');
+          // Laisser un peu de temps à Stockfish pour retourner bestmove
+          setTimeout(() => {
+            if (!analysisComplete) {
+              analysisComplete = true;
+              stockfishProcess.kill();
+              const time = Date.now() - startTime;
+              resolve({
+                bestMove,
+                score,
+                nodes,
+                depth,
+                time
+              });
+            }
+          }, 500);
+        }
+      }, timeSeconds * 1000);
+
+      // Timeout de sécurité (temps demandé + 5 secondes)
       setTimeout(() => {
         if (!analysisComplete) {
           analysisComplete = true;
+          clearTimeout(analysisTimeout);
           stockfishProcess.kill();
           reject(new Error('Timeout de l\'analyse'));
         }
-      }, 30000);
+      }, (timeSeconds + 5) * 1000);
     }
   });
 }
