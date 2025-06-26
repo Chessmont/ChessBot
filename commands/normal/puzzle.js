@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags } = require("discord.js");
+const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags, ComponentType } = require("discord.js");
 const axios = require("axios");
 const { Chess } = require("chess.js");
 
@@ -62,69 +62,7 @@ module.exports = {
 
   async execute(interaction) {
     try {
-      // Gestion des boutons
-      if (interaction.isButton()) {
-        const guildId = interaction.guild.id;
-
-        if (interaction.customId === 'play_move') {
-          await showMoveModal(interaction);
-          return;
-        } else if (interaction.customId === 'show_solution') {
-          const userPuzzle = pendingPuzzles.get(guildId);
-
-          if (!userPuzzle) {
-            return await interaction.reply({
-              content: '❌ Aucun puzzle en cours sur ce serveur',
-              flags: MessageFlags.Ephemeral
-            });
-          }
-
-          await showSolution(interaction, userPuzzle);
-          return;
-        } else if (interaction.customId === 'hint_button') {
-          const userPuzzle = pendingPuzzles.get(guildId);
-
-          if (!userPuzzle) {
-            return await interaction.reply({
-              content: '❌ Aucun puzzle en cours sur ce serveur',
-              flags: MessageFlags.Ephemeral
-            });
-          }
-
-          await showHint(interaction, userPuzzle);
-          return;
-        }
-      }
-
-      // Gestion des modals
-      if (interaction.isModalSubmit()) {
-        if (interaction.customId === 'move_modal') {
-          const userMove = interaction.fields.getTextInputValue('move_input').trim();
-          const guildId = interaction.guild.id;
-
-          // Vérifier si l'utilisateur a écrit quelque chose
-          if (!userMove) {
-            return await interaction.reply({
-              content: '❌ Vous devez écrire un coup pour jouer !',
-              flags: MessageFlags.Ephemeral
-            });
-          }
-
-          const userPuzzle = pendingPuzzles.get(guildId);
-
-          if (!userPuzzle) {
-            return await interaction.reply({
-              content: '❌ Aucun puzzle en cours sur ce serveur',
-              flags: MessageFlags.Ephemeral
-            });
-          }
-
-          await handleMove(interaction, userPuzzle, userMove);
-          return;
-        }
-      }
-
-      // Gestion des slash commands
+      // Gestion des slash commands uniquement
       const difficulty = interaction.options.getString('difficulte') || 'normal';
       const guildId = interaction.guild.id;
 
@@ -147,7 +85,7 @@ module.exports = {
       if (interaction.replied || interaction.deferred) {
         await interaction.editReply({ embeds: [errorEmbed] });
       } else {
-        await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+        await interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
       }
     }
   }
@@ -216,6 +154,74 @@ const createNewPuzzle = async (interaction, difficulty, guildId) => {
       themes: puzzleData.puzzle.themes,
       plays: puzzleData.puzzle.plays,
       hintLevel: 0 // Niveau d'indice (0 = aucun, 1 = nb coups, 2 = thèmes, 3 = première lettre)
+    });
+
+    // Créer les collectors pour les interactions
+    const buttonCollector = reply.createMessageComponentCollector({
+      componentType: ComponentType.Button,
+      time: 1800000 // 30 minutes
+    });
+
+    buttonCollector.on('collect', async (buttonInteraction) => {
+      if (buttonInteraction.customId === 'play_move') {
+        await showMoveModal(buttonInteraction);
+        
+        // Créer un collector spécifique pour ce modal
+        const modalFilter = (modalInteraction) => 
+          modalInteraction.customId === 'move_modal' && 
+          modalInteraction.user.id === buttonInteraction.user.id;
+          
+        buttonInteraction.awaitModalSubmit({ filter: modalFilter, time: 300000 }) // 5 minutes
+          .then(async (modalInteraction) => {
+            const userMove = modalInteraction.fields.getTextInputValue('move_input').trim();
+            
+            if (!userMove) {
+              return await modalInteraction.reply({
+                content: '❌ Vous devez écrire un coup pour jouer !',
+                flags: MessageFlags.Ephemeral
+              });
+            }
+
+            const userPuzzle = pendingPuzzles.get(guildId);
+            if (!userPuzzle) {
+              return await modalInteraction.reply({
+                content: '❌ Aucun puzzle en cours sur ce serveur',
+                flags: MessageFlags.Ephemeral
+              });
+            }
+
+            await handleMove(modalInteraction, userPuzzle, userMove);
+          })
+          .catch(() => {
+            // Timeout du modal - pas besoin de faire quelque chose
+          });
+          
+      } else if (buttonInteraction.customId === 'show_solution') {
+        const userPuzzle = pendingPuzzles.get(guildId);
+        if (!userPuzzle) {
+          return await buttonInteraction.reply({
+            content: '❌ Aucun puzzle en cours sur ce serveur',
+            flags: MessageFlags.Ephemeral
+          });
+        }
+        await showSolution(buttonInteraction, userPuzzle);
+      } else if (buttonInteraction.customId === 'hint_button') {
+        const userPuzzle = pendingPuzzles.get(guildId);
+        if (!userPuzzle) {
+          return await buttonInteraction.reply({
+            content: '❌ Aucun puzzle en cours sur ce serveur',
+            flags: MessageFlags.Ephemeral
+          });
+        }
+        await showHint(buttonInteraction, userPuzzle);
+      }
+    });
+
+    buttonCollector.on('end', () => {
+      // Nettoyer les données expirées
+      if (pendingPuzzles.has(guildId)) {
+        pendingPuzzles.delete(guildId);
+      }
     });
 
   } catch (error) {
