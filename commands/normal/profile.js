@@ -86,7 +86,7 @@ module.exports = {
                     });
                 } else {
                     let fieldValue = `**[${account.accountId}](${account.accountUrl})**\n`;
-                    
+
                     if (stats.ratings) {
                         const ratings = Object.entries(stats.ratings)
                             .filter(([_, rating]) => rating && rating > 0)
@@ -115,8 +115,8 @@ module.exports = {
                 profileEmbed.addFields({ name: '\u200B', value: '\u200B', inline: true });
             }
 
-            profileEmbed.setFooter({ 
-                text: `Profil demandé par ${interaction.user.displayName || interaction.user.username}` 
+            profileEmbed.setFooter({
+                text: `Profil demandé par ${interaction.user.displayName || interaction.user.username}`
             });
 
             await interaction.editReply({ embeds: [profileEmbed] });

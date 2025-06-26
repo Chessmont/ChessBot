@@ -1,8 +1,10 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder } = require("discord.js");
 const { getUserChessAccounts, addChessAccount, chessAccountExists } = require("../../api/db/chess");
 const { userExists, addUser } = require("../../api/db/users");
 const axios = require("axios");
 const { nanoid } = require("nanoid");
+const fs = require("fs");
+const path = require("path");
 
 const commandName = "linkaccount";
 const commandInfo = "Lier un compte Chess.com ou Lichess";
@@ -28,55 +30,78 @@ module.exports = {
   info: { commandName, commandInfo, commandDescription },
   data: new SlashCommandBuilder()
     .setName(commandName)
-    .setDescription(commandInfo),
+    .setDescription(commandInfo)
+    .addStringOption(option =>
+      option
+        .setName('url')
+        .setDescription('URL de votre profil Chess.com ou Lichess')
+        .setRequired(true)
+    ),
 
   async execute(interaction) {
     try {
+      // Gestion des boutons
+      if (interaction.isButton()) {
+        if (interaction.customId.startsWith('verify_')) {
+          await handleVerification(interaction);
+          return;
+        } else if (interaction.customId === 'cancel_link') {
+          await handleCancel(interaction);
+          return;
+        }
+      }
+
+      // Gestion des slash commands
       const userId = interaction.user.id;
       const userName = interaction.user.displayName || interaction.user.username;
+      const url = interaction.options.getString('url').trim();
 
       // Vérifier si l'utilisateur existe, sinon le créer
       if (!(await userExists(userId))) {
         await addUser(userId, userName);
       }
 
-      // Créer le menu de sélection de plateforme
-      const platformSelect = new StringSelectMenuBuilder()
-        .setCustomId('platform_select')
-        .setPlaceholder('Choisissez une plateforme')
-        .addOptions([
-          {
-            label: 'Chess.com',
-            description: 'Lier votre compte Chess.com',
-            value: 'chess.com',
-            emoji: '♟️'
-          },
-          {
-            label: 'Lichess.org',
-            description: 'Lier votre compte Lichess',
-            value: 'lichess',
-            emoji: '🏰'
-          }
-        ]);
+      // Détecter la plateforme à partir de l'URL
+      let platform = null;
+      let match = null;
 
-      const row = new ActionRowBuilder().addComponents(platformSelect);
+      for (const [key, info] of Object.entries(platformInfo)) {
+        const urlMatch = url.match(info.urlPattern);
+        if (urlMatch) {
+          platform = key;
+          match = urlMatch;
+          break;
+        }
+      }
 
-      const embed = new EmbedBuilder()
-        .setColor('#0099FF')
-        .setTitle('🔗 Lier un compte d\'échecs')
-        .setDescription('Choisissez la plateforme que vous souhaitez lier à votre profil Discord :')
-        .addFields(
-          { name: 'Chess.com', value: 'Plateforme populaire avec millions de joueurs', inline: true },
-          { name: 'Lichess.org', value: 'Plateforme open-source et gratuite', inline: true }
-        )
-        .setFooter({ text: 'Sélectionnez une option ci-dessous' })
-        .setTimestamp();
+      // Si aucune plateforme détectée
+      if (!platform || !match) {
+        const errorEmbed = new EmbedBuilder()
+          .setColor('#FF0000')
+          .setTitle('❌ URL non reconnue')
+          .setDescription('L\'URL fournie n\'est pas valide pour Chess.com ou Lichess.')
+          .addFields(
+            { name: 'URL fournie', value: `\`${url}\``, inline: false },
+            { name: 'Formats acceptés', value: '• `https://www.chess.com/member/username`\n• `https://lichess.org/@/username`', inline: false }
+          )
+          .setTimestamp();
 
-      await interaction.reply({
-        embeds: [embed],
-        components: [row],
-        ephemeral: true
-      });
+        return await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+      }
+
+      // Vérifier si l'utilisateur a déjà lié cette plateforme
+      if (await chessAccountExists(userId, platform)) {
+        const errorEmbed = new EmbedBuilder()
+          .setColor('#FF6B00')
+          .setTitle('⚠️ Compte déjà lié')
+          .setDescription(`Vous avez déjà lié un compte ${platformInfo[platform].name} à votre profil.`)
+          .setTimestamp();
+
+        return await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+      }
+
+      // Continuer avec la validation et vérification
+      await handleUrlValidation(interaction, platform, url);
 
     } catch (error) {
       console.error("Erreur dans la commande linkaccount:", error);
@@ -86,121 +111,20 @@ module.exports = {
         .setDescription('Une erreur s\'est produite lors de l\'initialisation de la commande.')
         .setTimestamp();
 
-      await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
-    }
-  },
-
-  async handleSelectMenu(interaction) {
-    if (interaction.customId === 'platform_select') {
-      await handlePlatformSelection(interaction);
-    }
-  },
-
-  async handleButton(interaction) {
-    if (interaction.customId.startsWith('verify_')) {
-      await handleVerification(interaction);
-    } else if (interaction.customId === 'cancel_link') {
-      await handleCancel(interaction);
+      if (interaction.replied || interaction.deferred) {
+        await interaction.editReply({ embeds: [errorEmbed] });
+      } else {
+        await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+      }
     }
   }
 };
-
-const handlePlatformSelection = async (interaction) => {
-  const platform = interaction.values[0];
-  const userId = interaction.user.id;
-
-  try {
-    // Vérifier si l'utilisateur a déjà lié cette plateforme
-    if (await chessAccountExists(userId, platform)) {
-      const errorEmbed = new EmbedBuilder()
-        .setColor('#FF6B00')
-        .setTitle('⚠️ Compte déjà lié')
-        .setDescription(`Vous avez déjà lié un compte ${platformInfo[platform].name} à votre profil.`)
-        .setTimestamp();
-
-      return await interaction.update({
-        embeds: [errorEmbed],
-        components: []
-      });
-    }
-
-    const embed = new EmbedBuilder()
-      .setColor('#0099FF')
-      .setTitle(`🔗 Lier votre compte ${platformInfo[platform].name}`)
-      .setDescription(`Veuillez fournir l'URL de votre profil ${platformInfo[platform].name} :`)
-      .addFields(
-        { name: 'Format attendu', value: `\`${platformInfo[platform].example}\``, inline: false },
-        { name: 'Instructions', value: '1. Copiez l\'URL de votre profil\n2. Collez-la dans le chat\n3. Suivez les instructions de vérification', inline: false }
-      )
-      .setFooter({ text: 'Envoyez votre URL dans ce canal' })
-      .setTimestamp();
-
-    const cancelButton = new ButtonBuilder()
-      .setCustomId('cancel_link')
-      .setLabel('Annuler')
-      .setStyle(ButtonStyle.Secondary)
-      .setEmoji('❌');
-
-    const row = new ActionRowBuilder().addComponents(cancelButton);
-
-    await interaction.update({
-      embeds: [embed],
-      components: [row]
-    });
-
-    // Créer un collecteur pour l'URL
-    const filter = (msg) => msg.author.id === userId;
-    const collector = interaction.channel.createMessageCollector({
-      filter,
-      max: 1,
-      time: 300000 // 5 minutes
-    });
-
-    collector.on('collect', async (message) => {
-      const url = message.content.trim();
-
-      // Supprimer le message de l'utilisateur
-      try {
-        await message.delete();
-      } catch (error) {
-        // Ignore si on ne peut pas supprimer
-      }
-
-      await handleUrlValidation(interaction, platform, url);
-    });
-
-    collector.on('end', (collected, reason) => {
-      if (reason === 'time' && collected.size === 0) {
-        const timeoutEmbed = new EmbedBuilder()
-          .setColor('#FF0000')
-          .setTitle('⏰ Temps écoulé')
-          .setDescription('La demande de liaison a expiré. Veuillez recommencer.')
-          .setTimestamp();
-
-        interaction.editReply({
-          embeds: [timeoutEmbed],
-          components: []
-        }).catch(() => { });
-      }
-    });
-
-  } catch (error) {
-    console.error("Erreur lors de la sélection de plateforme:", error);
-    const errorEmbed = new EmbedBuilder()
-      .setColor('#FF0000')
-      .setTitle('❌ Erreur')
-      .setDescription('Une erreur s\'est produite.')
-      .setTimestamp();
-
-    await interaction.update({ embeds: [errorEmbed], components: [] });
-  }
-}
 
 const handleUrlValidation = async(interaction, platform, url) => {
   const userId = interaction.user.id;
 
   try {
-    // Valider l'URL
+    // Valider l'URL (elle a déjà été validée dans execute, mais on peut garder cette vérification)
     const match = url.match(platformInfo[platform].urlPattern);
     if (!match) {
       const errorEmbed = new EmbedBuilder()
@@ -213,9 +137,9 @@ const handleUrlValidation = async(interaction, platform, url) => {
         )
         .setTimestamp();
 
-      return await interaction.editReply({
+      return await interaction.reply({
         embeds: [errorEmbed],
-        components: []
+        ephemeral: true
       });
     }
 
@@ -247,6 +171,7 @@ const handleUrlValidation = async(interaction, platform, url) => {
         { name: '📝 Instructions', value: instructions, inline: false },
         { name: '🔗 Profil à modifier', value: `[${username}](${url})`, inline: false }
       )
+      .setImage(`attachment://${platform}-explanation.png`)
       .setFooter({ text: 'Vous avez 30 minutes pour compléter la vérification' })
       .setTimestamp();
 
@@ -264,10 +189,29 @@ const handleUrlValidation = async(interaction, platform, url) => {
 
     const row = new ActionRowBuilder().addComponents(verifyButton, cancelButton);
 
-    await interaction.editReply({
+    // Créer l'attachment pour l'image d'explication
+    const imagePath = path.join(__dirname, '../../assets', `${platform}-explanation.png`);
+    let attachment = null;
+
+    try {
+      if (fs.existsSync(imagePath)) {
+        attachment = new AttachmentBuilder(imagePath, { name: `${platform}-explanation.png` });
+      }
+    } catch (error) {
+      console.error('Erreur lors du chargement de l\'image:', error);
+    }
+
+    const replyOptions = {
       embeds: [embed],
-      components: [row]
-    });
+      components: [row],
+      ephemeral: true
+    };
+
+    if (attachment) {
+      replyOptions.files = [attachment];
+    }
+
+    await interaction.reply(replyOptions);
 
   } catch (error) {
     console.error("Erreur lors de la validation de l'URL:", error);
@@ -277,7 +221,7 @@ const handleUrlValidation = async(interaction, platform, url) => {
       .setDescription('Une erreur s\'est produite lors de la validation.')
       .setTimestamp();
 
-    await interaction.editReply({ embeds: [errorEmbed], components: [] });
+    await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
   }
 }
 
