@@ -85,8 +85,7 @@ const getGuildIds = async () => {
     console.log(`Commands deployed to ${guildIds.length} guilds.`);
 
     for (const commandInfo of commandsInfo) {
-      const permsLevel = await db.getPermsLevel(commandInfo[1]);
-      await db.addCommand(commandInfo[0], permsLevel);
+      await db.addCommand(commandInfo[0]);
     }
     console.log(`Successfully reloaded ${commandsInfo.length} application (/) commands info on database.`);
   }
